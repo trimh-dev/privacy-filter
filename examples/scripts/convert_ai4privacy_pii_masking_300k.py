@@ -10,54 +10,65 @@ Ai4Privacy rows provide source text plus span offsets in either
 default, which is intended for:
 
     opf eval OUT.jsonl --eval-mode untyped
+
+Use ``--label-map`` to map PII-Masking-300k labels to the native
+Privacy Filter categories documented in the OpenAI Privacy Filter model card.
+Labels without a corresponding Privacy Filter definition are dropped.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
-from collections import defaultdict
 import json
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
-
 DATASET_NAME = "ai4privacy/pii-masking-300k"
 
+# Mapping from OpenAI Privacy Filter model card, section 7.2.1,
+# "PII-Masking-300k". Keys are normalized by uppercasing and removing
+# underscores/hyphens before lookup.
 OPF_V2_LABEL_MAP = {
-    "ACCOUNTNAME": "account_number",
-    "ACCOUNTNUMBER": "account_number",
-    "BANKACCOUNTNUMBER": "account_number",
-    "BITCOINADDRESS": "account_number",
-    "CREDITCARDNUMBER": "account_number",
-    "CREDITCARDCVV": "account_number",
-    "CREDITCARDISSUER": "account_number",
+    "ACCOUNT": "account_number",
+    "BANKNUM": "account_number",
+    "BIC": "account_number",
+    "CREDITCARD": "account_number",
+    "CRYPTOADDRESS": "account_number",
+    "DOCNUM": "account_number",
+    "DRIVERLICENSE": "account_number",
     "IBAN": "account_number",
-    "IP": "account_number",
-    "IPV4": "account_number",
-    "IPV6": "account_number",
-    "SSN": "account_number",
-    "STREET": "private_address",
-    "STREETADDRESS": "private_address",
-    "BUILDINGNUMBER": "private_address",
+    "IDCARD": "account_number",
+    "PASSPORT": "account_number",
+    "SOCIALNUMBER": "account_number",
+    "TAXNUM": "account_number",
+    "BANKMUNICIP": "private_address",
+    "BANKPOSTCODE": "private_address",
+    "BANKSTREET": "private_address",
+    "BUILDING": "private_address",
     "CITY": "private_address",
-    "COUNTY": "private_address",
-    "ZIPCODE": "private_address",
+    "GEOCOORD": "private_address",
+    "POSTCODE": "private_address",
+    "SECADDRESS": "private_address",
+    "STREET": "private_address",
+    "CARDEXPIRY": "private_date",
     "DATE": "private_date",
-    "TIME": "private_date",
     "DOB": "private_date",
+    "BOD": "private_date",
     "EMAIL": "private_email",
-    "GIVENNAME": "private_person",
-    "SURNAME": "private_person",
-    "MIDDLENAME": "private_person",
-    "NAME": "private_person",
+    "GIVENNAME1": "private_person",
+    "GIVENNAME2": "private_person",
+    "LASTNAME1": "private_person",
+    "LASTNAME2": "private_person",
+    "LASTNAME3": "private_person",
+    "TITLE": "private_person",
     "USERNAME": "private_person",
-    "PASSWORD": "secret",
+    "TEL": "private_phone",
+    "IP": "private_url",
+    "OTP": "secret",
+    "PASS": "secret",
     "PIN": "secret",
-    "PHONEIMEI": "private_phone",
-    "PHONENUMBER": "private_phone",
-    "TELEPHONENUMBER": "private_phone",
-    "URL": "private_url",
 }
 
 
@@ -106,13 +117,14 @@ def iter_spans(row: dict[str, Any]) -> Iterable[tuple[int, int, str, str]]:
                 yield start, end, label, text[start:end]
 
 
-def normalize_label(label: str, label_map: str) -> str | None:
-    if label_map == "none":
+def normalize_label(label: str, label_map: bool) -> str | None:
+    if not label_map:
         return label
-    return OPF_V2_LABEL_MAP.get(label.upper().replace("_", "").replace("-", ""))
+    normalized = label.upper().replace("_", "").replace("-", "")
+    return OPF_V2_LABEL_MAP.get(normalized)
 
 
-def convert_row(row: dict[str, Any], idx: int, label_map: str) -> dict[str, Any] | None:
+def convert_row(row: dict[str, Any], idx: int, label_map: bool) -> dict[str, Any] | None:
     text = str(row.get("source_text") or "")
     if not text:
         return None
@@ -133,9 +145,8 @@ def convert_row(row: dict[str, Any], idx: int, label_map: str) -> dict[str, Any]
         "info": {
             "id": str(row.get("id") or idx),
             "source": DATASET_NAME,
-            "source_split": row.get("set"),
             "language": row.get("language"),
-            "label_map": label_map,
+            "label_map_source": f"{DATASET_NAME}/{row.get('set')}"
         },
     }
 
@@ -147,9 +158,11 @@ def main() -> None:
     parser.add_argument("--max-examples", type=int, default=None)
     parser.add_argument(
         "--label-map",
-        choices=("none", "opf-v2"),
-        default="none",
-        help="Use 'none' with opf eval --eval-mode untyped. Use 'opf-v2' for rough typed mapping.",
+        action="store_true",
+        help=(
+            "Map source labels to native OPF v2 labels using the model-card mapping. "
+            "Omit this flag to keep source labels for opf eval --eval-mode untyped."
+        ),
     )
     args = parser.parse_args()
 
